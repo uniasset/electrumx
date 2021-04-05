@@ -2122,6 +2122,27 @@ class UFO(Coin):
         'electrumx1.ufobject.com s t',
     ]
 
+class UFORegtest(Coin):
+    NAME = "UniformFiscalObject"
+    SHORTNAME = "UFO"
+    NET = "regtest"
+    XPUB_VERBYTES = bytes.fromhex("043587cf")
+    XPRV_VERBYTES = bytes.fromhex("04358394")
+    P2PKH_VERBYTE = bytes.fromhex("6F")
+    P2SH_VERBYTES = [bytes.fromhex("82")]
+    WIF_BYTE = bytes.fromhex("EF")
+    GENESIS_HASH = ('a482cf37ea99d8c74f62e28903208bfb'
+                    'c12901b35738feff20fdf7e3b671afb7')
+    DESERIALIZER = lib_tx.DeserializerSegWit
+    TX_COUNT = 0
+    TX_COUNT_HEIGHT = 100
+    TX_PER_BLOCK = 2
+    RPC_PORT = 19888
+    REORG_LIMIT = 2000
+    PEERS = [
+#        'electrumx1.ufobject.com s t',
+    ]
+
 
 class Newyorkcoin(AuxPowMixin, Coin):
     NAME = "Newyorkcoin"

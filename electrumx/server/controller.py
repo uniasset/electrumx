@@ -82,13 +82,14 @@ class Controller(ServerBase):
         '''Start the RPC server and wait for the mempool to synchronize.  Then
         start serving external clients.
         '''
-        if not (0, 18, 5) <= aiorpcx_version < (0, 19):
+        self.logger.info(f'aiorpcX version: {version_string(aiorpcx_version)}')
+        # if not (0, 18, 5) <= aiorpcx_version < (0, 19):
+        if aiorpcx_version <= (0, 18, 5):
             raise RuntimeError('aiorpcX version 0.18.5+ is required')
 
         env = self.env
         min_str, max_str = env.coin.SESSIONCLS.protocol_min_max_strings()
         self.logger.info(f'software version: {electrumx.version}')
-        self.logger.info(f'aiorpcX version: {version_string(aiorpcx_version)}')
         self.logger.info(f'supported protocol versions: {min_str}-{max_str}')
         self.logger.info(f'event loop policy: {env.loop_policy}')
         self.logger.info(f'reorg limit is {env.reorg_limit:,d} blocks')

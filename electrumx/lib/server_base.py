@@ -115,7 +115,11 @@ class ServerBase:
         loop.set_exception_handler(self.on_exception)
 
         # Start serving and wait for shutdown, log receipt of the event
-        server_task = await spawn(serve)
+#<<<<<<< HEAD
+#        server_task = await spawn(serve)
+#=======
+        server_task = await spawn(serve, daemon=True)
+#>>>>>>> 7e53936f34d2f1c979c64f91d15d6745fb8103c2
         try:
             await shutdown_event.wait()
         except KeyboardInterrupt:

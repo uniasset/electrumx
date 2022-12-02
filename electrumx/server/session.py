@@ -26,7 +26,7 @@ import pylru
 from aiorpcx import (Event, JSONRPCAutoDetect, JSONRPCConnection,
                      ReplyAndDisconnect, Request, RPCError, RPCSession,
                      handler_invocation, serve_rs, serve_ws, sleep,
-                     NewlineFramer, TaskTimeout, timeout_after)
+                     NewlineFramer, TaskTimeout, timeout_after, run_in_thread)
 
 import electrumx
 import electrumx.lib.util as util
@@ -167,7 +167,8 @@ class SessionManager:
 
         # Set up the RPC request handlers
         cmds = ('add_peer daemon_url disconnect getinfo groups log peers '
-                'query reorg sessions stop'.split())
+                'query reorg sessions stop debug_memusage_list_all_objects '
+                'debug_memusage_get_random_backref_chain'.split())
         LocalRPC.request_handlers = {cmd: getattr(self, 'rpc_' + cmd)
                                      for cmd in cmds}
 
@@ -593,6 +594,39 @@ class SessionManager:
             raise RPCError(BAD_REQUEST, 'still catching up with daemon')
         return f'scheduled a reorg of {count:,d} blocks'
 
+    async def rpc_debug_memusage_list_all_objects(self, limit: int) -> str:
+        """Return a string listing the most common types in memory."""
+        import objgraph  # optional dependency
+        import io
+        with io.StringIO() as fd:
+            objgraph.show_most_common_types(
+                limit=limit,
+                shortnames=False,
+                file=fd)
+            return fd.getvalue()
+
+    async def rpc_debug_memusage_get_random_backref_chain(self, objtype: str) -> str:
+        """Return a dotfile as text containing the backref chain
+        for a randomly selected object of type objtype.
+
+        Warning: very slow! and it blocks the server.
+
+        To convert to image:
+        $ dot -Tps filename.dot -o outfile.ps
+        """
+        import objgraph  # optional dependency
+        import random
+        import io
+        with io.StringIO() as fd:
+            await run_in_thread(
+                lambda:
+                objgraph.show_chain(
+                    objgraph.find_backref_chain(
+                        random.choice(objgraph.by_type(objtype)),
+                        objgraph.is_proper_module),
+                    output=fd))
+            return fd.getvalue()
+
     # --- External Interface
 
     async def serve(self, notifications, event):
@@ -944,7 +978,7 @@ class ElectrumX(SessionBase):
     '''A TCP server that handles incoming Electrum connections.'''
 
     PROTOCOL_MIN = (1, 4)
-    PROTOCOL_MAX = (1, 4, 2)
+    PROTOCOL_MAX = (1, 4, 3)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -1528,6 +1562,8 @@ class ElectrumX(SessionBase):
 class LocalRPC(SessionBase):
     '''A local TCP RPC server session.'''
 
+    processing_timeout = 10**9  # disable timeouts
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.client = 'RPC'
@@ -1800,3 +1836,51 @@ class AuxPoWElectrumX(ElectrumX):
             height += 1
 
         return headers.hex()
+
+
+class NameIndexElectrumX(ElectrumX):
+    def set_request_handlers(self, ptuple):
+        super().set_request_handlers(ptuple)
+
+        if ptuple >= (1, 4, 3):
+            self.request_handlers['blockchain.name.get_value_proof'] = self.name_get_value_proof
+
+    async def name_get_value_proof(self, scripthash, cp_height=0):
+        history = await self.scripthash_get_history(scripthash)
+
+        trimmed_history = []
+        prev_height = None
+
+        for update in history[::-1]:
+            txid = update['tx_hash']
+            height = update['height']
+
+            if (self.coin.NAME_EXPIRATION is not None
+                    and prev_height is not None
+                    and height < prev_height - self.coin.NAME_EXPIRATION):
+                break
+
+            tx = await(self.transaction_get(txid))
+            update['tx'] = tx
+            del update['tx_hash']
+
+            tx_merkle = await self.transaction_merkle(txid, height)
+            del tx_merkle['block_height']
+            update['tx_merkle'] = tx_merkle
+
+            if height <= cp_height:
+                header = await self.block_header(height, cp_height)
+                update['header'] = header
+
+            trimmed_history.append(update)
+
+            if height <= cp_height:
+                break
+
+            prev_height = height
+
+        return {scripthash: trimmed_history}
+
+
+class NameIndexAuxPoWElectrumX(NameIndexElectrumX, AuxPoWElectrumX):
+    pass

@@ -19,6 +19,7 @@ import attr
 from aiorpcx import run_in_thread, sleep
 
 from electrumx.lib.hash import hash_to_hex_str, hex_str_to_hash
+from electrumx.lib.tx import SkipTxDeserialize
 from electrumx.lib.util import class_logger, chunks, OldTaskGroup
 from electrumx.server.db import UTXO
 
@@ -139,7 +140,8 @@ class MemPool:
             await synchronized_event.wait()
             async with self.lock:
                 # Threaded as can be expensive
-                await run_in_thread(self._update_histogram, 100_000)
+                bin_size = self.coin.MEMPOOL_COMPACT_HISTOGRAM_BINSIZE
+                await run_in_thread(self._update_histogram, bin_size)
             await sleep(self.coin.MEMPOOL_HISTOGRAM_REFRESH_SECS)
 
     def _update_histogram(self, bin_size):
@@ -165,7 +167,8 @@ class MemPool:
         '''Calculate and return a compact fee histogram as needed for
         "mempool.get_fee_histogram" protocol request.
 
-        histogram: feerate (sat/byte) -> total size in bytes of txs that pay approx feerate
+        histogram: feerate (sat/vbyte) -> total size in bytes of txs that pay approx feerate
+        bin_size: ~minimum vsize of a bucket of txs in the result (e.g. 100 kb)
         '''
         # Now compact it.  For efficiency, get_fees returns a
         # compact histogram with variable bin size.  The compact
@@ -174,7 +177,7 @@ class MemPool:
         # transactions with a fee rate in the interval
         # [rate_(n-1), rate_n)], and rate_(n-1) > rate_n.
         # Intervals are chosen to create tranches containing at
-        # least 100kb of transactions
+        # least a certain cumulative size (bin_size) of transactions.
         assert bin_size > 0
         compact = []
         cum_size = 0
@@ -326,7 +329,11 @@ class MemPool:
                 # mempool or it may have gotten in a block
                 if not raw_tx:
                     continue
-                tx, tx_size = deserializer(raw_tx).read_tx_and_vsize()
+                try:
+                    tx, tx_size = deserializer(raw_tx).read_tx_and_vsize()
+                except SkipTxDeserialize as ex:
+                    self.logger.debug(f'skipping tx {hash_to_hex_str(hash)}: {ex}')
+                    continue
                 # Convert the inputs and outputs into (hashX, value) pairs
                 # Drop generation-like inputs from MemPoolTx.prevouts
                 txin_pairs = tuple((txin.prev_hash, txin.prev_idx)
